@@ -1,77 +1,284 @@
-// class responsible for parsing down raw input from the user
-import java.util.ArrayList;
-import java.util.List;
-import java.io.IOException;
 import java.nio.file.*;
 import java.util.stream.Stream;
-import java.util.Scanner;
+import java.util.*;
+import java.io.*;
+ 
 
-class Parser{
+// class responsible for parsing down raw input from the user
+class Parser {
     String commandName;
     String[] arguments;
     // add fields for redirection
-    private boolean isRedirected = false; 
-    private boolean isAppend = false;     
+    private boolean isRedirected = false;
+    private boolean isAppend = false;
     private String redirectFile = null;
-        
+
     public boolean parse(String input) {
-        this.isRedirected = false;
-        this.isAppend = false;
-        this.redirectFile = null;
+    this.isRedirected = false;
+    this.isAppend = false;
+    this.redirectFile = null;
+    
+    if (input == null || input.trim().isEmpty()) {
+        return false;
+    }
+
+    List<String> tokens = new ArrayList<>(Arrays.asList(input.trim().split("\\s+")));
+    
+    tokens = mergePaths(tokens);
+    
+    if (tokens.isEmpty()) return false;
+
+    commandName = tokens.get(0);
+    
+    int redirectIndex = findRedirectionIndex(tokens);
+    
+    if (redirectIndex != -1) {
+        // Extract arguments before redirection
+        this.arguments = tokens.subList(1, redirectIndex).toArray(new String[0]);
         
-        if (input == null || input.trim().isEmpty()) {
+        // Extract redirection info
+        this.isRedirected = true;
+        this.isAppend = tokens.get(redirectIndex).equals(">>");
+        
+        if (redirectIndex + 1 < tokens.size()) {
+            this.redirectFile = tokens.get(redirectIndex + 1);
+        } else {
+            System.out.println("Error: Missing redirection file name");
+            this.commandName = null;
             return false;
         }
-        
-        String[] userInput = input.split("\\s+");
-        // set command name 
-        commandName = userInput[0];
-    
-        List<String> inputList = new ArrayList<>();
-        for (int i = 1; i < userInput.length; i++) {
-            String arg = userInput[i];
-            if (arg.equals(">") || arg.equals(">>")) {
-                this.isRedirected = true;
-                this.isAppend = arg.equals(">>");
-                // next arg must be file name
-                if (i + 1 < userInput.length) {
-                    this.redirectFile = userInput[i + 1];
-                    break;
-
-                } else {
-                    System.out.println("Error: Missing redirection file name after " + arg);
-                    this.commandName = null; // Invalidate command
-                    return false;
-                }
-            }
-            // if the arg is not > or >> , it is a normal command argument
-            inputList.add(arg);
-        }
-        
-        this.arguments = inputList.toArray(new String[0]);
-
-        
-        return true;
+    } else {
+        // No redirection, all tokens after command are arguments
+        this.arguments = tokens.subList(1, tokens.size()).toArray(new String[0]);
     }
-
-    public boolean isRedirected() { return isRedirected; }
-    public boolean isAppend() { return isAppend; }
-    public String getRedirectFile() { return redirectFile; }
-    public String getCommandName() { return commandName; }
-    public String[] getArguments() { return arguments; }
+    return true;
+    }
+    
+    private List<String> mergePaths(List<String> tokens) {
+        List<String> merged = new ArrayList<>();
+        
+        for (int i = 0; i < tokens.size(); i++) {
+            String token = tokens.get(i);
+            
+            if (token.matches("^[a-zA-Z]:\\\\.*")) {
+                StringBuilder path = new StringBuilder(token);
+                
+                // Keep merging while next token looks like a path continuation
+                while (i + 1 < tokens.size() && 
+                       !tokens.get(i + 1).equals(">") && 
+                       !tokens.get(i + 1).equals(">>") &&
+                       !tokens.get(i + 1).matches("^[a-zA-Z]:\\\\.*")) {
+                    path.append(" ").append(tokens.get(++i));
+                }
+                merged.add(path.toString());
+            } else {
+                merged.add(token);
+            }
+        }
+        return merged;
+    }
+    
+    private int findRedirectionIndex(List<String> tokens) {
+        for (int i = 0; i < tokens.size(); i++) {
+            if (tokens.get(i).equals(">") || tokens.get(i).equals(">>")) {
+                return i;
+            }
+        }
+        return -1;
+    }
+    
+    public boolean isRedirected() {return isRedirected;}
+    public boolean isAppend() {return isAppend;}
+    public String getRedirectFile() {return redirectFile;}
+    public String getCommandName() {return commandName;}
+    public String[] getArguments() {return arguments;}
 }
 
+
 // main class to handle user input and command execution
-public class Terminal {
-    Parser parser;
-     
-    public Terminal() {
-        this.parser = new Parser();
+public class Terminal{
+    Parser parser = new Parser();
+    private File currentDirectory = new File(System.getProperty("user.dir"));
+
+    // methods for each command:
+
+    // (1) pwd command
+    public String pwd() {
+        return currentDirectory.toString();
     }
-    // methods for each command
+    // (2) cd command
+    public void cd(String[] args) {
+        // case 1: cd
+        if (args.length == 0) {
+            currentDirectory = new File(System.getProperty("user.home"));
+        }
+    
+        // case 2: cd ..
+        else if (args[0].equals("..")) {
+            File parent = currentDirectory.getParentFile();
+            if (parent != null) {
+                currentDirectory = parent;
+            } 
+        }
+        // case 3: cd path
+        else {
+            Path newPath = Paths.get(args[0]);
+            if (!newPath.isAbsolute()) {
+                newPath = currentDirectory.toPath().resolve(newPath);
+            }
+            newPath = newPath.normalize();
+            if (Files.isDirectory(newPath)) {
+                currentDirectory = newPath.toFile();
+            } else {
+                System.out.println("cd: " + args[0] + ": No such directory");
+            }
+        }
+    }
+
+    // (3) ls command
+    public String ls() {
+    StringBuilder result = new StringBuilder();
+    try (DirectoryStream<Path> stream = Files.newDirectoryStream(currentDirectory.toPath())) {
+
+        List<String> names = new ArrayList<>();
+        for (Path path : stream) {
+            names.add(path.getFileName().toString());
+        }
+
+        Collections.sort(names);
+
+        for (String name : names) {
+             result.append(name).append("\n"); 
+        }
+    } catch (IOException e) {
+        return "Error: cannot list directory: " + e.getMessage();
+    }
+    return result.toString().trim();
+
+    }
+    
+    // (4) mkdir command
+    public void mkdir(String[] args) {
+       if (args.length == 0) {
+        System.out.println("mkdir: missing operand");
+        return;
+    }
+    for (String arg : args) {
+        try {
+            Path inputPath = Paths.get(arg);
+            Path targetPath = inputPath.isAbsolute() ? 
+                              inputPath.normalize() : 
+                              currentDirectory.toPath().resolve(inputPath).normalize();
+
+            if (Files.exists(targetPath)) {
+                System.out.println("mkdir: cannot create directory '" + arg + "': File exists");
+                continue;
+            }
+
+            Files.createDirectories(targetPath);
+
+        } catch (Exception e) {
+            System.out.println("mkdir: cannot create directory '" + arg + "'");
+          }
+       }
+    }
+    // (5) rmdir command
+    public void rmdir(String[] args) {
+        if (args.length != 1) {
+            System.out.println("rmdir: missing operand");
+            return;
+        }
+
+        if ("*".equals(args[0])) {
+            removeAllEmptyDirectories();
+        } else {
+            removeSingleDirectory(args[0]);
+        }
+    }
+
+    private void removeAllEmptyDirectories() {
+        File[] files = currentDirectory.listFiles();
+
+        if (files == null) {
+            System.out.println(" Cannot read current directory");
+            return;
+        }
+        for (File file : files) {
+            if (file.isDirectory() && isDirectoryEmpty(file)) {
+                file.delete();
+            }
+        }
+    }
+
+    private void removeSingleDirectory(String path) {
+        File dir;
+        if (path.startsWith("/") || path.contains(":")) {
+            dir = new File(path);
+        } else {
+            dir = new File(currentDirectory, path);
+        }
+
+        if (!dir.exists()) {
+            System.out.println("rmdir: failed to remove '" + path + "': No such file or directory");
+            return;
+        }
+
+        if (!dir.isDirectory()) {
+            System.out.println("rmdir: failed to remove '" + path + "': Not a directory");
+            return;
+        }
+
+        if (!isDirectoryEmpty(dir)) {
+            System.out.println("rmdir: failed to remove '" + path + "': Directory is not empty");
+            return;
+        }
+
+        if (!dir.delete()) {
+            System.out.println("rmdir: failed to remove '" + path + "'");
+        }  
+        
+    }
+
+    private boolean isDirectoryEmpty(File directory) {
+        if (!directory.isDirectory()) return false;
+        String[] contents = directory.list();
+        return contents != null && contents.length == 0;
+    }
+
+
+    // (6) touch command
+    public void touch(String[] args) {
+        if (args.length != 1) {
+            System.out.println("touch: missing file operand");
+            return;
+        }
+
+        String filePath = args[0];
+        File file;
+
+        if (filePath.startsWith("/") || filePath.contains(":")) {
+            file = new File(filePath);
+        } else {
+            file = new File(currentDirectory, filePath);
+        }
+
+        File parent = file.getParentFile();
+        if (parent != null && !parent.exists()) {
+            System.out.println("Error: Parent directory does not exist: " + parent.getAbsolutePath());
+            return;
+        }
+
+        try {
+            file.createNewFile();
+        } catch (IOException e) {
+            System.out.println("touch: cannot touch '" + args[0] + "'");
+        }
+    }
+
+    // (7,8) cp and cp -r command
     public void cp(String[] args) {
         if (args.length < 2) {
-            System.out.println("Error: cp requires at least two file operands.");
+            System.out.println("cp: missing file operand");
             return;
         }
 
@@ -80,7 +287,7 @@ public class Terminal {
         if (isRecursive) {
             // logic for recursive copy
             if (args.length != 3) {
-                System.out.println("Error: cp -r requires source and destination directory operands.");
+                System.out.println("cp: missing destination file operand");
                 return;
             }
 
@@ -106,21 +313,21 @@ public class Terminal {
 
                             // copy the item (file or directory)
                             Files.copy(sourceItem, destinationItem,
-                                       StandardCopyOption.COPY_ATTRIBUTES,
-                                       StandardCopyOption.REPLACE_EXISTING);
+                                    StandardCopyOption.COPY_ATTRIBUTES,
+                                    StandardCopyOption.REPLACE_EXISTING);
                         } catch (IOException e) {
-                            System.out.println("Error processing " + sourceItem + ": " + e.getMessage());
+                            System.out.println("cp: error copying '" + sourceItem + "'");
                         }
                     });
                 }
             } catch (IOException e) {
-                System.out.println("Fatal error during recursive copy: " + e.getMessage());
+                System.out.println("cp: cannot create directory '" + args[2] + "'");
             }
 
         } else {
             // logic for standard 'cp' (file copy)
             if (args.length != 2) {
-                System.out.println("Error: cp requires source and destination file operands.");
+                System.out.println("cp: missing destination file operand");
                 return;
             }
 
@@ -129,26 +336,130 @@ public class Terminal {
 
             // validate source path for standard cp
             if (!Files.exists(source) || Files.isDirectory(source)) {
-                System.out.println("Error: Cannot use cp on a directory without the -r flag or File does not exist.");
+                System.out.println("Error: Cannot use cp on a directory without the -r flag .");
                 return;
             }
 
             try {
                 Files.copy(source, destination, StandardCopyOption.REPLACE_EXISTING);
             } catch (IOException e) {
-                System.out.println("Error copying file: " + e.getMessage());
+                System.out.println("cp: cannot create '" + args[1] + "'");
             }
         }
-    } 
-    // methods to dispatch the command based on user input
-    public void chooseCommandAction(String command, String[] args) {
+    }
+    // (9) rm command
+    public void rm(String[] args) {
+        if (args.length == 0) {
+            System.out.println("rm: missing operand");
+            return;
+        }
+
+        for (String arg : args) {
+            File file = new File(currentDirectory,arg);
+
+            if (!file.exists()) {
+                System.out.println("rm: cannot remove '" + arg + "': No such file or directory");
+                continue;
+            }
+
+            if (!deleteRecursively(file)) {
+                System.out.println("rm: cannot remove '" + arg + "'");
+            }  
+        }
+    }
+
+    private boolean deleteRecursively(File file) {
+        if (file.isDirectory()) {
+            File[] contents = file.listFiles();
+
+            if (contents != null) {
+                for (File f : contents) {
+                    if (!deleteRecursively(f)) {
+                        return false;
+                    }
+                }
+            }
+        }
+        return file.delete();
+    }
+    // (10) cat command
+    public void cat(String[] args) {
+        if (args.length == 0) {
+            System.out.println("cat: missing operand");
+            return;
+        }
+
+        for (String fileName : args) {
+            File file = new File(currentDirectory, fileName);
+
+            if (!file.exists()) {
+                System.out.println("cat: " + fileName + ": No such file or directory");
+                continue;
+            }
+
+            try (BufferedReader br = new BufferedReader(new FileReader(file))) {
+                String line;
+                while ((line = br.readLine()) != null) {
+                    System.out.println(line);
+                }
+            }catch(IOException e) {
+                System.out.println("cat: " + fileName + ": " + e.getMessage());
+            }
+        }
+    }
+
+    // (11) wc command
+
+    // (12) zip command
+
+    // (13) unzip command
+
+
+    //This method will choose the suitable command method to be called
+    public void chooseCommandAction() {
+        String command = parser.getCommandName();
+        String[] args = parser.getArguments();
+
         String output = null;
         boolean isOutputCommand = true;
+        
         switch (command) {
+            case "pwd":
+                output = pwd();
+                isOutputCommand = true; break;
+            case "cd":
+                cd(args);
+                isOutputCommand = false; break;
+            case "ls":
+                output = ls();
+                isOutputCommand = true;  break;
+            case "mkdir":
+                mkdir(args);
+                isOutputCommand = false; break;
+            case "rmdir":
+                rmdir(args); 
+                isOutputCommand = false; break;
+            case "touch": 
+                touch(args); 
+                isOutputCommand = false; break;
             case "cp":
                 cp(args);
-                isOutputCommand = false;
-                break;            
+                isOutputCommand = false; break;
+            case "rm":
+                rm(args);
+                isOutputCommand = false; break;
+            case "cat":
+                cat(args);
+                isOutputCommand = false; break;
+            case "wc":
+                // wc(args);
+                isOutputCommand = false; break;
+            case "zip":
+                // zip(args);
+                isOutputCommand = false; break;
+            case "unzip":
+                // unzip(args);
+                isOutputCommand = false; break;
             default:
                 System.out.println("Error: Unknown command " + command);
                 return;
@@ -191,15 +502,13 @@ public class Terminal {
         System.out.println("--- Command Line Interpreter (CLI) Started ---");
         System.out.println("Enter commands. Type 'exit' to terminate.");
 
-        // 2. Main execution loop
+        // Main execution loop
         while (true) {
             System.out.print("cli:~$ "); // Display prompt to the user
             
-            // Get the entire line of input from the user
             input = scanner.nextLine(); 
 
-            // --- Handle lifecycle commands FIRST ---
-            
+             
             // Check for the mandatory 'exit' command
             if (input.trim().equalsIgnoreCase("exit")) {
                 System.out.println("CLI terminating. Goodbye!");
@@ -211,17 +520,13 @@ public class Terminal {
                 continue;
             }
 
-            // 3. Parse the user input
-            // The parser extracts commandName, args, and checks for redirection (>, >>)
+            // parser extracts commandName, args, and checks for redirection
             if (cli.parser.parse(input)) {
-                // 4. Dispatch the command for execution
-                cli.chooseCommandAction(cli.parser.getCommandName(), cli.parser.getArguments());
+                // Dispatch the command for execution
+                cli.chooseCommandAction();
             } 
-            // Note: If parsing fails (e.g., redirection syntax error), 
-            // the parser should print the error, and the loop continues.
-        }
+         }
         
-        // 5. Close the scanner resource when the program ends
         scanner.close();
     }
 }
