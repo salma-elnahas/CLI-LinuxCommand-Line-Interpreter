@@ -1,8 +1,8 @@
-import java.nio.file.*;
-import java.util.stream.Stream;
-import java.util.*;
 import java.io.*;
- 
+import java.nio.file.*;
+import java.util.*;
+import java.util.stream.Stream;
+import java.util.zip.*;
 
 // class responsible for parsing down raw input from the user
 class Parser {
@@ -99,7 +99,7 @@ class Parser {
 public class Terminal{
     Parser parser = new Parser();
     private File currentDirectory = new File(System.getProperty("user.dir"));
-
+    File cwd = new File(System.getProperty("user.dir"));
     // methods for each command:
 
     // (1) pwd command
@@ -410,10 +410,144 @@ public class Terminal{
 
     // (11) wc command
 
-    // (12) zip command
+// (12) zip command
+public void zip(String[] args) throws IOException {
+        if (args.length < 2) {
+            System.out.println("please enter zip and file correctly.");
+            return;
+        }
 
+        String zipName;
+        boolean recursive = false;
+        int start = 0;
+
+        if ("-r".equals(args[0])) {
+            recursive = true;
+            start = 1;
+            if (args.length < 3) {
+                System.out.println("please enter -r followed by zip archive and directory correctly to zip");
+                return;
+            }
+        }
+
+        zipName = args[start];
+        boolean addedAnything = false;
+
+        try (FileOutputStream fos = new FileOutputStream(zipName);
+             ZipOutputStream zos = new ZipOutputStream(fos)) {
+
+            for (int i = start + 1; i < args.length; i++) {
+                File f = new File(args[i]);
+                if (!f.isAbsolute()) f = new File(currentDirectory, args[i]);
+                if (!f.exists()) {
+                    System.out.println("file not found " + args[i]);
+                    continue;
+                }
+
+                if (f.isDirectory()) {
+                    if (recursive) {
+                        zipDirectory(f, f.getName(), zos);
+                        addedAnything = true;
+                    } else {
+                        System.out.println("zip: " + args[i] + " is a directory ");
+                    }
+                } else {
+                    zipFile(f, zos);
+                    addedAnything = true;
+                }
+            }
+        }
+
+        if (addedAnything) {
+            System.out.println("Created archive: " + zipName);
+        } else {
+            
+            new File(zipName).delete();
+            System.out.println("no valid files found to zip, archive not created.");
+        }
+    }
+
+    private void zipFile(File file, ZipOutputStream zos) throws IOException {
+        try (BufferedInputStream bis = new BufferedInputStream(new FileInputStream(file))) {
+            zos.putNextEntry(new ZipEntry(file.getName()));
+            bis.transferTo(zos);
+            zos.closeEntry();
+        }
+    }
+
+    private void zipDirectory(File dir, String baseName, ZipOutputStream zos) throws IOException {
+        File[] files = dir.listFiles();
+        if (files == null) return;
+
+        for (File f : files) {
+            String entryName = baseName + "/" + f.getName();
+            if (f.isDirectory()) {
+                zipDirectory(f, entryName, zos);
+            } else {
+                try (BufferedInputStream bis = new BufferedInputStream(new FileInputStream(f))) {
+                    zos.putNextEntry(new ZipEntry(entryName));
+                    bis.transferTo(zos);
+                    zos.closeEntry();
+                }
+            }
+        }
+    }
+    
     // (13) unzip command
+    public void unZip(String[] args) throws IOException {
+        if (args.length < 1) {
+            System.out.println("please enter zip archive name correctly to unzip.");
+            return;
+        }
 
+        File destination = currentDirectory;
+        String zipName = args[0];
+        File zf = new File(zipName);
+        if (!zf.isAbsolute()) zf = new File(currentDirectory, zipName);
+
+        if (!zf.exists() || !zf.isFile()) {
+            System.out.println("unzip: archive not found  " + zf.getAbsolutePath());
+            return;
+        }
+
+        if (args.length >= 2 && "-d".equals(args[1])) {
+            if (args.length < 3) {
+                System.out.println("missing destination");
+                return;
+            }
+            destination = new File(args[2]);
+            if (!destination.exists()) destination.mkdirs();
+        }
+
+        int filesExtracted = 0, dirsCreated = 0;
+
+        try (ZipInputStream zis = new ZipInputStream(new FileInputStream(zf))) {
+            ZipEntry entry;
+            while ((entry = zis.getNextEntry()) != null) {
+                File out = new File(destination, entry.getName());
+                if (entry.isDirectory()) {
+                    if (!out.exists()) out.mkdirs();
+                    dirsCreated++;
+                } 
+                else {
+                    File parent = out.getParentFile();
+                    if (parent != null && !parent.exists()) parent.mkdirs();
+                    try (FileOutputStream fos = new FileOutputStream(out)) {
+                        zis.transferTo(fos);
+                    }
+                    filesExtracted++;
+                }
+                zis.closeEntry();
+            }
+        }
+
+        if (filesExtracted == 0 && dirsCreated == 0) {
+            System.out.println("unzip: no entries found in archive → " + zf.getName());
+        } 
+        else {
+            System.out.println("Archive extracted successfully" + destination.getAbsolutePath());
+        }
+    }
 
     //This method will choose the suitable command method to be called
     public void chooseCommandAction() {
@@ -455,11 +589,25 @@ public class Terminal{
                 // wc(args);
                 isOutputCommand = false; break;
             case "zip":
-                // zip(args);
-                isOutputCommand = false; break;
+                try {
+                    zip(args);
+                } 
+                catch (IOException e) {
+                    System.out.println("zip: " + e.getMessage());
+                }
+                isOutputCommand = false;
+                break;
+
             case "unzip":
-                // unzip(args);
-                isOutputCommand = false; break;
+                try {
+                    unZip(args);
+                }
+                catch (IOException e) {
+                    System.out.println("unzip: " + e.getMessage());
+                }
+                isOutputCommand = false;
+                break;
+
             default:
                 System.out.println("Error: Unknown command " + command);
                 return;
