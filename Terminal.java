@@ -66,7 +66,7 @@ class Parser {
             if (token.matches("^[a-zA-Z]:\\\\.*")) {
                 StringBuilder path = new StringBuilder(token);
                 
-                // Keep merging while next token looks like a path continuation
+                // Keep mergin while next token looks like a path continuation
                 while (i + 1 < tokens.size() && 
                        !tokens.get(i + 1).equals(">") && 
                        !tokens.get(i + 1).equals(">>") &&
@@ -278,6 +278,7 @@ public class Terminal {
             System.out.println("touch: cannot touch '" + args[0] + "'");
         }
     }
+    
     // (7) cp cp-r commands
     public void cp(String[] args) {
         if (args.length < 2) {
@@ -686,23 +687,22 @@ public class Terminal {
     }
     // Helper Method to handle output redirection
     private void redirectOutput(String content, String fileName, boolean append) {
-        // Convert the string filename to a Path object for file operations
-        Path filePath = Paths.get(fileName);
+        // resolve the file path based on current directory
+        Path filePath = currentDirectory.toPath().resolve(fileName);
+        // build a list of file options
+        ArrayList<StandardOpenOption> options = new ArrayList<>();
+        options.add(StandardOpenOption.CREATE);
+        options.add(StandardOpenOption.WRITE);
+        if (append) {
+            // >> add to the end of the file
+            options.add(StandardOpenOption.APPEND);
+        } else {
+            // > overwrite the file
+            options.add(StandardOpenOption.TRUNCATE_EXISTING);
+        }
         try {
-            if (append) {
-                // >> append to file
-                Files.writeString(filePath, content + "\n",
-                    // build a list of file options 
-                    StandardOpenOption.CREATE, 
-                    StandardOpenOption.WRITE, 
-                    StandardOpenOption.APPEND);
-            } else {
-                // > overwrite file content 
-                Files.writeString(filePath, content + "\n", 
-                    StandardOpenOption.CREATE, 
-                    StandardOpenOption.WRITE, 
-                    StandardOpenOption.TRUNCATE_EXISTING);
-            }
+            // writes the content to the file with the specified options
+            Files.writeString(filePath, content + "\n", options.toArray(new StandardOpenOption[0]));
         } catch (IOException e) {
             System.out.println("Error redirecting output to file: " + e.getMessage());
         }
